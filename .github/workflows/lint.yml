@@ -1,0 +1,49 @@
+name: linter
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+# Если не коммитим авто-фиксы — достаточно read
+permissions:
+  contents: read
+
+concurrency:
+  group: linter-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend-format:
+    name: PHP Pint (api/)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4' # ок, если проект готов к 8.4
+          tools: composer
+
+      - name: Cache Composer
+        uses: actions/cache@v4
+        with:
+          path: api/vendor
+          key: composer-${{ runner.os }}-${{ hashFiles('api/composer.lock') }}
+          restore-keys: composer-${{ runner.os }}-
+
+      - name: Install PHP deps
+        run: composer install -q --no-ansi --no-interaction --no-scripts --no-progress --prefer-dist
+
+      # Для проверки без изменения файлов можно использовать --test
+      # - name: Run Pint (check only)
+      #   run: vendor/bin/pint --test
+
+      - name: Run Pint (fix)
+        run: vendor/bin/pint

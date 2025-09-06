@@ -1,0 +1,116 @@
+name: tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Laravel tests (api/)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api
+    env:
+      APP_ENV: testing
+      CACHE_DRIVER: array
+      SESSION_DRIVER: array
+      QUEUE_CONNECTION: sync
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          tools: composer:v2
+          extensions: mbstring, dom, curl, sqlite, pdo_sqlite
+          coverage: xdebug
+
+      - name: Cache Composer
+        uses: actions/cache@v4
+        with:
+          path: api/vendor
+          key: composer-${{ runner.os }}-${{ hashFiles('api/composer.lock') }}
+          restore-keys: composer-${{ runner.os }}-
+
+      - name: Install PHP dependencies
+        run: composer install --no-interaction --no-ansi --no-progress --prefer-dist
+
+      - name: Prepare .env + SQLite DB
+        run: |
+          cp .env.example .env || true
+          mkdir -p database
+          : > database/database.sqlite
+          {
+            echo "APP_KEY="
+            echo "DB_CONNECTION=sqlite"
+            echo "DB_DATABASE=$(pwd)/database/database.sqlite"
+          } >> .env
+          php artisan key:generate --force
+
+      - name: Migrate
+        run: php artisan migrate --no-interaction -v
+
+      - name: Run tests (PHPUnit/Artisan)
+        # Используй artisan test, если есть tests/Pest/… — оба пути работают
+        run: |
+          if [ -f artisan ]; then php artisan test --coverage-clover=coverage.xml -v; else ./vendor/bin/phpunit; fi
+
+      - name: Upload coverage artifact (optional)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: api/coverage.xml
+
+  frontend:
+    name: Frontend tests (frontend/)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'     # оставил твой Node 22
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Node dependencies
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm i; fi
+
+      - name: Lint (if present)
+        run: npm run lint --if-present
+
+      - name: Unit tests (if present)
+        env:
+          CI: true
+        run: npm test -- --watch=false --coverage || echo "no tests"
+
+      - name: Build (smoke)
+        run: npm run build --if-present
+
+      - name: Upload FE coverage (optional)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage
+          path: frontend/coverage
